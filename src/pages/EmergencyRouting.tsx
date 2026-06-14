@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import ReactFlow, { Node as RFNode, Edge as RFEdge, Controls, Background, MiniMap, MarkerType } from 'reactflow';
+import 'reactflow/dist/style.css';
 import { motion } from 'framer-motion';
 import { Ambulance, Clock, MapPin, AlertTriangle, Navigation } from 'lucide-react';
 import { useGraphStore } from '@/lib/store';
 import { dijkstra } from '@/lib/algorithms';
 import { buildAdjacencyList } from '@/lib/graph';
-import { TRAFFIC_MULTIPLIER } from '@/types';
+import { TRAFFIC_MULTIPLIER, TRAFFIC_COLORS } from '@/types';
 import { resolveSampleData } from '@/lib/sampleData';
 
 export default function EmergencyRouting() {
@@ -12,6 +14,59 @@ export default function EmergencyRouting() {
   const [hospital, setHospital] = useState('');
   const [patient, setPatient] = useState('');
   const [result, setResult] = useState<any>(null);
+
+  const pathSet = useMemo(() => {
+    if (!result || !result.path) return new Set<string>();
+    const set = new Set<string>();
+    for (let i = 0; i < result.path.length - 1; i++) {
+      const edge = store.edges.find(
+        (e) =>
+          (e.source === result.path[i] && e.target === result.path[i + 1]) ||
+          (e.target === result.path[i] && e.source === result.path[i + 1])
+      );
+      if (edge) set.add(edge.id);
+    }
+    return set;
+  }, [result, store.edges]);
+
+  const flowNodes: RFNode[] = store.nodes.map((n) => ({
+    id: n.id,
+    type: 'default',
+    position: { x: n.x, y: n.y },
+    data: { label: n.name },
+    style: {
+      background: result?.path?.includes(n.id)
+        ? n.id === hospital
+          ? '#ef4444'
+          : n.id === patient
+            ? '#eab308'
+            : '#22c55e'
+        : '#1e293b',
+      border: `2px solid ${
+        n.id === hospital ? '#ef4444' : n.id === patient ? '#eab308' : result?.path?.includes(n.id) ? '#22c55e' : '#334155'
+      }`,
+      color: '#fff',
+      borderRadius: '12px',
+      padding: '8px 16px',
+      fontWeight: 600,
+      fontSize: '13px',
+      transition: 'all 0.3s',
+    },
+  }));
+
+  const flowEdges: RFEdge[] = store.edges.map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    label: `${e.distance}km`,
+    style: {
+      stroke: pathSet.has(e.id) ? '#22c55e' : TRAFFIC_COLORS[e.traffic],
+      strokeWidth: pathSet.has(e.id) ? 5 : 2,
+      opacity: pathSet.has(e.id) ? 1 : 0.6,
+      transition: 'all 0.3s',
+    },
+    markerEnd: { type: MarkerType.ArrowClosed, color: pathSet.has(e.id) ? '#22c55e' : TRAFFIC_COLORS[e.traffic] },
+  }));
 
   const handleFindEmergencyRoute = () => {
     if (!hospital || !patient) return;
@@ -83,9 +138,18 @@ export default function EmergencyRouting() {
         </div>
       </div>
 
+      {/* Graph Visualization */}
+      <div className="bg-surface-800 rounded-xl border border-surface-700 overflow-hidden" style={{ height: '45vh' }}>
+        <ReactFlow nodes={flowNodes} edges={flowEdges} fitView className="bg-surface-900">
+          <Controls className="bg-surface-800 border-surface-700" />
+          <Background gap={20} color="#1e293b" />
+          <MiniMap nodeColor="#6366f1" maskColor="rgba(15,23,42,0.8)" className="bg-surface-800 border-surface-700" />
+        </ReactFlow>
+      </div>
+
       {result && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-          className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="bg-red-600/10 border border-red-600/30 rounded-xl p-4">
             <div className="flex items-center gap-3">
               <Clock className="w-8 h-8 text-red-400" />
@@ -97,7 +161,10 @@ export default function EmergencyRouting() {
           </div>
           <div className="bg-surface-800 rounded-xl p-4 border border-surface-700">
             <p className="text-surface-400 text-xs">Distance</p>
-            <p className="text-xl font-bold">{result.distance.toFixed(1)} km</p>
+            <div className="flex items-baseline gap-1 mt-1">
+              <p className="text-xl font-bold">{result.distance.toFixed(1)}</p>
+              <span className="text-surface-400 text-sm">km</span>
+            </div>
           </div>
           <div className="bg-surface-800 rounded-xl p-4 border border-surface-700">
             <p className="text-surface-400 text-xs">Traffic Level</p>
@@ -105,15 +172,37 @@ export default function EmergencyRouting() {
           </div>
           <div className="bg-surface-800 rounded-xl p-4 border border-surface-700">
             <p className="text-surface-400 text-xs">Avg Speed</p>
-            <p className="text-xl font-bold">{result.speed} km/h</p>
+            <div className="flex items-baseline gap-1 mt-1">
+              <p className="text-xl font-bold">{result.speed}</p>
+              <span className="text-surface-400 text-sm">km/h</span>
+            </div>
           </div>
-          <div className="lg:col-span-4 bg-surface-800 rounded-xl p-4 border border-surface-700">
+          <div className="bg-surface-800 rounded-xl p-4 border border-surface-700">
+            <p className="text-surface-400 text-xs">Nodes Visited</p>
+            <p className="text-xl font-bold">{result.visitedNodes.length}</p>
+          </div>
+          <div className="lg:col-span-5 bg-surface-800 rounded-xl p-4 border border-surface-700">
             <h3 className="font-semibold text-sm mb-3 flex items-center gap-2"><Navigation className="w-4 h-4 text-green-400" /> Emergency Path</h3>
             {result.path.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
-                {result.path.map((id: string) => {
+                {result.path.map((id: string, idx: number) => {
                   const n = store.nodes.find((node) => node.id === id);
-                  return <span key={id} className="bg-red-600/20 text-red-300 px-3 py-1 rounded-lg text-sm font-medium">{n?.name ?? id}</span>;
+                  const isHospital = id === hospital;
+                  const isPatient = id === patient;
+                  return (
+                    <span key={id}
+                      className={`px-3 py-1 rounded-lg text-sm font-medium flex items-center gap-1 ${
+                        isHospital ? 'bg-red-600/20 text-red-300' :
+                        isPatient ? 'bg-yellow-600/20 text-yellow-300' :
+                        'bg-green-600/20 text-green-300'
+                      }`}
+                    >
+                      {isHospital && <Ambulance className="w-3 h-3" />}
+                      {isPatient && <MapPin className="w-3 h-3" />}
+                      {n?.name ?? id}
+                      {idx < result.path.length - 1 && <span className="text-surface-600 mx-0.5">→</span>}
+                    </span>
+                  );
                 })}
               </div>
             ) : (
